@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SERENA - سيرينا للتوظيف</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 60px 40px;
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .logo {
+            margin-bottom: 40px;
+        }
+
+        .logo img {
+            max-width: 300px;
+            height: auto;
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            color: #667eea;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+            margin-bottom: 30px;
+        }
+
+        .update-message {
+            background: #f0f4ff;
+            border-right: 4px solid #667eea;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 8px;
+            color: #333;
+            font-size: 1.05em;
+            line-height: 1.6;
+        }
+
+        .buttons-container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin: 30px 0;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            font-size: 1.1em;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: bold;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .btn-facebook {
+            background: #1877f2;
+            color: white;
+        }
+
+        .btn-facebook:hover {
+            background: #0a66c2;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(24, 119, 242, 0.3);
+        }
+
+        .btn-whatsapp {
+            background: #25d366;
+            color: white;
+        }
+
+        .btn-whatsapp:hover {
+            background: #1fb344;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(37, 211, 102, 0.3);
+        }
+
+        .contact-info {
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 2px solid #eee;
+            color: #666;
+        }
+
+        .contact-info p {
+            margin-bottom: 15px;
+            font-size: 0.95em;
+        }
+
+        .whatsapp-number {
+            color: #25d366;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+
+        .facebook-link {
+            color: #1877f2;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+
+        .loading-text {
+            color: #667eea;
+            font-size: 0.95em;
+            margin-top: 20px;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 40px 25px;
+            }
+
+            h1 {
+                font-size: 2em;
+            }
+
+            .logo img {
+                max-width: 250px;
+            }
+
+            .btn {
+                padding: 12px 20px;
+                font-size: 1em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 300'%3E%3Cdefs%3E%3ClinearGradient id='blueGradient' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%234a90e2;stop-opacity:1' /%3E%3Cstop offset='100%25' style='stop-color:%234a90e2;stop-opacity:1' /%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M 50 80 Q 80 60 100 120 Q 110 160 80 180' stroke='url(%23blueGradient)' stroke-width='8' fill='none' stroke-linecap='round'/%3E%3Cpath d='M 70 80 Q 90 70 110 140 Q 115 170 90 190' stroke='url(%23blueGradient)' stroke-width='8' fill='none' stroke-linecap='round'/%3E%3Cpath d='M 90 85 Q 110 80 130 150 Q 135 180 110 200' stroke='url(%23blueGradient)' stroke-width='8' fill='none' stroke-linecap='round'/%3E%3Cpath d='M 110 90 Q 130 85 150 160 Q 155 190 130 210' stroke='url(%23blueGradient)' stroke-width='6' fill='none' stroke-linecap='round'/%3E%3Ctext x='180' y='160' font-size='48' font-weight='bold' fill='%234a90e2' font-family='Arial'%3ESERENA%3C/text%3E%3Ctext x='180' y='220' font-size='24' fill='%234a90e2' font-family='Arial' text-anchor='start'%3Eسيرينا%3C/text%3E%3C/svg%3E" alt="SERENA Logo">
+        </div>
+
+        <h1>SERENA</h1>
+        <p class="subtitle">سيرينا للتوظيف</p>
+
+        <div class="update-message">
+            <p>🔄 <strong>الموقع قيد التحديث حالياً</strong></p>
+            <p>نعمل على إضافة المزيد من المعلومات والفرص الوظيفية المميزة</p>
+            <p class="loading-text">⏳ تابعنا قريباً...</p>
+        </div>
+
+        <div class="buttons-container">
+            <a href="https://www.facebook.com/profile.php?id=61577240213275" target="_blank" class="btn btn-facebook">
+                📘 زورونا على Facebook
+            </a>
+            <a href="https://wa.me/963952710300?text=السلام عليكم ورحمة الله وبركاته%0Aأود التعرف على الفرص الوظيفية المتاحة" target="_blank" class="btn btn-whatsapp">
+                💬 تواصل معنا عبر WhatsApp
+            </a>
+        </div>
+
+        <div class="contact-info">
+            <p><strong>📞 اتصل بنا مباشرة:</strong></p>
+            <p class="whatsapp-number">+963 952 710 300</p>
+            <p style="margin-top: 20px; color: #999; font-size: 0.9em;">
+                نحن هنا لمساعدتك في العثور على الفرصة الوظيفية المناسبة
+            </p>
+        </div>
+    </div>
+</body>
+</html>
