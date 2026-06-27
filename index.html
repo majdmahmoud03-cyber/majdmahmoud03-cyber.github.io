@@ -1,710 +1,422 @@
-<?php
-/**
- * Serena V3 — لوحة التحكم الرئيسية (Rebuilt)
- * نظام بطاقات الميزات المخصصة لكل موظف
- */
-require 'config.php';
-require_once 'includes/auth.php';
-
-if (!isLoggedIn()) {
-  header('Location: login.php');
-  exit;
-}
-
-$user = getCurrentUser();
-$db = getDB();
-$isAdmin = ($user['role'] === 'admin');
-$isBranchMgr = ($user['role'] === 'branch_manager');
-$isRegularUser = ($user['role'] === 'user');
-
-// ── تحميل الميزات المتاحة للموظف ──────────────────────────────
-$userFeatures = [];
-if ($isRegularUser) {
-  try {
-    $fs = $db->prepare("SELECT dashboard_features FROM users WHERE id = ?");
-    $fs->execute([$user['id']]);
-    $row = $fs->fetch();
-    $userFeatures = json_decode($row['dashboard_features'] ?? '[]', true) ?: [];
-  } catch (Exception $e) {
-    $userFeatures = [];
-  }
-}
-function hasFeature(string $key, bool $isRegular, array $features): bool
-{
-  if (!$isRegular)
-    return true; // admin & branch_manager يرون الكل
-  return in_array($key, $features);
-}
-
-// ── إحصاءات (للأدمن ومدير الفرع فقط) ──────────────────────────
-$stats = [];
-$recentRequests = [];
-if (!$isRegularUser) {
-  try {
-    $stats['clients'] = $db->query("SELECT COUNT(*) FROM clients")->fetchColumn();
-    $stats['companies'] = $db->query("SELECT COUNT(*) FROM companies")->fetchColumn();
-    $stats['vacancies'] = $db->query("SELECT COUNT(*) FROM hire_requests WHERE status NOT IN ('completed','cancelled')")->fetchColumn();
-    $stats['messages'] = $db->query("SELECT COUNT(*) FROM site_messages WHERE status='new'")->fetchColumn();
-  } catch (Exception $e) {
-    $stats = ['clients' => 0, 'companies' => 0, 'vacancies' => 0, 'messages' => 0];
-  }
-
-  try {
-    $recentRequests = $db->query("
-            (SELECT 'individual' as request_type, c.id, c.name_ar as name, c.phone_primary as phone,
-                   c.profession_primary as detail, c.created_at, c.source,
-                   c.nationality, c.experience_years, c.target_vacancies_json, c.notes_json,
-                   c.date_of_birth, c.languages_json, c.work_history_json, c.work_location_type,
-                   c.country, c.gender, c.education_level
-             FROM clients c WHERE c.source='website' ORDER BY c.created_at DESC LIMIT 25)
-            UNION ALL
-            (SELECT 'investor' as request_type, ir.id, ir.full_name as name, ir.phone,
-                   ir.investor_type as detail, ir.created_at, 'website' as source,
-                   '' as nationality, '' as experience_years, '' as target_vacancies_json, '' as notes_json,
-                   '' as date_of_birth, '' as languages_json, '' as work_history_json, '' as work_location_type,
-                   ir.country, '' as gender, '' as education_level
-             FROM investor_requests ir ORDER BY ir.created_at DESC LIMIT 10)
-            ORDER BY created_at DESC LIMIT 30
-        ")->fetchAll(PDO::FETCH_ASSOC);
-  } catch (Exception $e) {
-    $recentRequests = [];
-  }
-}
-
-// ── تحية حسب الوقت ─────────────────────────────────────────────
-$hour = (int) date('H');
-$greeting = $hour < 12 ? 'صباح الخير' : ($hour < 17 ? 'مرحباً' : 'مساء الخير');
-$userName = $user['name_ar'] ?? $user['name_en'] ?? 'موظفنا العزيز';
-
-// ── تعريف البطاقات ─────────────────────────────────────────────
-$allCards = [
-  'register_client' => ['title' => 'تسجيل عميل', 'desc' => 'أضف عميلاً جديداً أو استخرجه من السيرة الذاتية', 'icon' => 'fa-user-plus', 'grad' => 'linear-gradient(135deg,#3b82f6,#1d4ed8)', 'shadow' => 'rgba(59,130,246,.35)', 'action' => 'onclick="openQuickEntryModal()"', 'label' => 'تسجيل'],
-  'register_company' => ['title' => 'تسجيل شركة', 'desc' => 'أضف شركة جديدة لقاعدة البيانات', 'icon' => 'fa-building', 'grad' => 'linear-gradient(135deg,#10b981,#059669)', 'shadow' => 'rgba(16,185,129,.35)', 'action' => 'onclick="openQuickCompanyModal()"', 'label' => 'تسجيل'],
-  'register_vacancy' => ['title' => 'تسجيل شاغر', 'desc' => 'أضف شاغراً وظيفياً لشركة مسجلة', 'icon' => 'fa-briefcase', 'grad' => 'linear-gradient(135deg,#8b5cf6,#7c3aed)', 'shadow' => 'rgba(139,92,246,.35)', 'action' => 'onclick="openQuickVacancyModal()"', 'label' => 'تسجيل'],
-  'advanced_search' => ['title' => 'قائمة العملاء', 'desc' => 'تصفح وابحث في قاعدة بيانات العملاء المسجلين', 'icon' => 'fa-users', 'grad' => 'linear-gradient(135deg,#06b6d4,#0891b2)', 'shadow' => 'rgba(6,182,212,.35)', 'action' => 'onclick="openAdvancedSearchModal()"', 'label' => 'فتح'],
-  'companies_list' => ['title' => 'قائمة الشركات', 'desc' => 'استعرض وأدر جميع الشركات الشريكة مع الوكالة', 'icon' => 'fa-list-alt', 'grad' => 'linear-gradient(135deg,#34d399,#10b981)', 'shadow' => 'rgba(52,211,153,.35)', 'action' => 'onclick="openCompaniesModal()"', 'label' => 'فتح'],
-  'vacancies_board' => ['title' => 'الشواغر المتاحة للتسويق', 'desc' => 'استكشف قائمة الشواغر النشطة والمسوقة حالياً، انسخ إعلاناتها وسجل المهتمين.', 'icon' => 'fa-columns', 'grad' => 'linear-gradient(135deg,#ec4899,#db2777)', 'shadow' => 'rgba(236,72,153,.35)', 'action' => 'onclick="openVacanciesModal()"', 'label' => 'فتح'],
-  'messages' => ['title' => 'مراسلة الزملاء', 'desc' => 'تواصل مع فريق العمل عبر نظام الرسائل الداخلي', 'icon' => 'fa-paper-plane', 'grad' => 'linear-gradient(135deg,#60a5fa,#3b82f6)', 'shadow' => 'rgba(96,165,250,.35)', 'action' => 'href="messages.php"', 'label' => 'فتح'],
-  'site_messages' => ['title' => 'صندوق الوارد', 'desc' => 'رسائل وشكاوى زوار الموقع الواردة عبر صفحة الاتصال', 'icon' => 'fa-inbox', 'grad' => 'linear-gradient(135deg,#f97316,#ea580c)', 'shadow' => 'rgba(249,115,22,.35)', 'action' => 'href="site-messages.php"', 'label' => 'فتح'],
-  'phone_directory' => ['title' => 'دليل الهاتف', 'desc' => 'دليل أرقام الشركات والعملاء والجهات الخارجية', 'icon' => 'fa-phone-alt', 'grad' => 'linear-gradient(135deg,#64748b,#475569)', 'shadow' => 'rgba(100,116,139,.35)', 'action' => 'href="phone-directory.php"', 'label' => 'فتح'],
-  'study_abroad' => ['title' => 'الدراسة في الخارج', 'desc' => 'إدارة طلبات وبرامج الدراسة والمنح الدراسية', 'icon' => 'fa-graduation-cap', 'grad' => 'linear-gradient(135deg,#6366f1,#4f46e5)', 'shadow' => 'rgba(99,102,241,.35)', 'action' => 'href="study-abroad.php"', 'label' => 'فتح'],
-  'investor_register' => ['title' => 'تسجيل مستثمر', 'desc' => 'تسجيل طلبات المستثمرين الراغبين بفرص الاستثمار', 'icon' => 'fa-chart-line', 'grad' => 'linear-gradient(135deg,#fbbf24,#f59e0b)', 'shadow' => 'rgba(251,191,36,.35)', 'action' => 'href="investor-register.php"', 'label' => 'فتح'],
-  'generate_card' => ['title' => 'طباعة بطاقة', 'desc' => 'مركز إدارة البطاقات ومساحة عمل الطباعة', 'icon' => 'fa-print', 'grad' => 'linear-gradient(135deg,#ef4444,#dc2626)', 'shadow' => 'rgba(239,68,68,.35)', 'action' => 'onclick="openPrintBasketModal()"', 'label' => 'إدارة'],
-  'cv_trainer' => ['title' => 'تدريب AI', 'desc' => 'مختبر تدريب وتحسين نموذج الذكاء للسير الذاتية', 'icon' => 'fa-brain', 'grad' => 'linear-gradient(135deg,#6d28d9,#8b5cf6)', 'shadow' => 'rgba(109,40,217,.35)', 'action' => 'href="cv-trainer.php"', 'label' => 'فتح'],
-  'ai_outreach' => ['title' => 'المراسل الذكي', 'desc' => 'توليد وإرسال رسائل توظيف مخصصة بالذكاء الاصطناعي', 'icon' => 'fa-robot', 'grad' => 'linear-gradient(135deg,#10b981,#0ea5e9)', 'shadow' => 'rgba(16,185,129,.35)', 'action' => 'href="ai-outreach.php"', 'label' => 'التجربة'],
-];
-
-// فقط البطاقات المتاحة للمستخدم الحالي
-$visibleCards = [];
-foreach ($allCards as $key => $card) {
-  // بطاقة تدريب AI والمراسل للأدمن فقط
-  if (($key === 'cv_trainer' || $key === 'ai_outreach') && !$isAdmin)
-    continue;
-  if (hasFeature($key, $isRegularUser, $userFeatures)) {
-    $visibleCards[$key] = $card;
-  }
-}
-$page_title = 'لوحة التحكم';
-?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
-
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title><?php echo $page_title; ?> — وكالة سيرينا للتوظيف</title>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-  <script src="assets/vendor/tailwindcss.js"></script>
-  <link rel="stylesheet" href="assets/css/design-system.css">
-  <script src="assets/vendor/chart.min.js"></script>
-  <link rel="stylesheet" href="assets/css/index-custom.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>وكالة سيرينا للتوظيف والاستثمار | مجموعة سيرينا</title>
+    <meta name="description" content="وكالة Serena للتوظيف والاستثمار - جزء من مجموعة سيرينا - حلول متكاملة للأفراد والشركات والمستثمرين منذ عام 2000">
+    
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: { 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a' },
+                        secondary: { 50: '#fdf4ff', 500: '#d946ef', 600: '#c026d3', 900: '#701a75' },
+                        dark: { 800: '#111827', 900: '#030712' }
+                    },
+                    fontFamily: {
+                        sans: ['Cairo', 'sans-serif'],
+                    },
+                    animation: {
+                        'float': 'float 6s ease-in-out infinite',
+                        'glass-shine': 'glass-shine 3s linear infinite',
+                        'ticker': 'ticker 30s linear infinite',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-15px)' },
+                        },
+                        'glass-shine': {
+                            '0%': { backgroundPosition: '-200% center' },
+                            '100%': { backgroundPosition: '200% center' },
+                        },
+                        ticker: {
+                            '0%': { transform: 'translateX(0)' },
+                            '100%': { transform: 'translateX(50%)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <style>
+        body { background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%); }
+        .hero-bg { background: linear-gradient(135deg, rgba(15,23,42,0.9) 0%, rgba(30,41,59,0.95) 50%, rgba(15,23,42,0.9) 100%), url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="20" cy="20" r="20" fill="rgba(59,130,246,0.1)"/><circle cx="80" cy="80" r="30" fill="rgba(139,92,246,0.1)"/></svg>'); background-attachment: fixed; }
+        .glass-card { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); }
+        .dark-glass { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .text-gradient-premium { background: linear-gradient(135deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .ticker-wrap { background: linear-gradient(90deg, rgba(0,0,0,0.4) 0%, transparent 10%, transparent 90%, rgba(0,0,0,0.4) 100%); overflow: hidden; }
+        .ticker-track { display: flex; animation: ticker 40s linear infinite; }
+        .reveal { opacity: 0; transform: translateY(30px); animation: revealUp 0.6s ease forwards; }
+        .reveal.active { animation: revealUp 0.6s ease forwards; }
+        @keyframes revealUp { to { opacity: 1; transform: translateY(0); } }
+        .delay-100 { animation-delay: 100ms; }
+        .delay-200 { animation-delay: 200ms; }
+        .delay-300 { animation-delay: 300ms; }
+        .service-card { transition: all 0.3s ease; }
+        .service-card:hover { transform: translateY(-8px); box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+        .sector-tag { transition: all 0.3s ease; animation: slideIn 0.5s ease forwards; opacity: 0; }
+        @keyframes slideIn { to { opacity: 1; } }
+    </style>
 </head>
-
-<body>
-  <?php require 'includes/staff-header.php'; ?>
-
-  <!-- ══════════ HERO ══════════ -->
-  <div class="hero fade-up">
-    <div class="hero-inner">
-      <div class="hero-left">
-        <div class="hero-greeting"><i class="fas fa-sun"></i> <?php echo $greeting; ?></div>
-        <h1 class="hero-name"><?php echo htmlspecialchars($userName); ?></h1>
-        <div class="hero-role">
-          <i class="fas fa-shield-alt"></i>
-          <?php echo $isAdmin ? 'مدير النظام' : ($isBranchMgr ? 'مدير فرع' : 'موظف'); ?>
-        </div>
-        <div class="hero-date"><i class="far fa-calendar-alt"></i> <?php echo date('l، j F Y'); ?></div>
-      </div>
-      <div class="hero-avatar"><?php echo mb_substr($userName, 0, 1); ?></div>
-    </div>
-  </div>
-
-  <!-- ══════════ STATS (Admin/BranchMgr) ══════════ -->
-  <?php if (!$isRegularUser && !empty($stats)): ?>
-    <div class="stats-row fade-up-d1 fade-up">
-      <div class="stat-grid">
-        <a href="advanced-search.php" class="stat-card" style="text-decoration:none;">
-          <div class="stat-icon" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);">
-            <i class="fas fa-users" style="color:#fff;"></i>
-          </div>
-          <div>
-            <div class="stat-val"><?php echo number_format($stats['clients']); ?></div>
-            <div class="stat-lbl">إجمالي العملاء</div>
-          </div>
-        </a>
-        <a href="companies-list.php" class="stat-card" style="text-decoration:none;">
-          <div class="stat-icon" style="background:linear-gradient(135deg,#10b981,#059669);">
-            <i class="fas fa-building" style="color:#fff;"></i>
-          </div>
-          <div>
-            <div class="stat-val"><?php echo number_format($stats['companies']); ?></div>
-            <div class="stat-lbl">الشركات المسجلة</div>
-          </div>
-        </a>
-        <a href="vacancies-board.php" class="stat-card" style="text-decoration:none;">
-          <div class="stat-icon" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);">
-            <i class="fas fa-briefcase" style="color:#fff;"></i>
-          </div>
-          <div>
-            <div class="stat-val"><?php echo number_format($stats['vacancies']); ?></div>
-            <div class="stat-lbl">الشواغر النشطة</div>
-          </div>
-        </a>
-        <a href="site-messages.php" class="stat-card" style="text-decoration:none;">
-          <div class="stat-icon" style="background:linear-gradient(135deg,#f97316,#ea580c);">
-            <i class="fas fa-inbox" style="color:#fff;"></i>
-          </div>
-          <div>
-            <div class="stat-val"><?php echo number_format($stats['messages']); ?></div>
-            <div class="stat-lbl">رسائل جديدة</div>
-          </div>
-        </a>
-      </div>
-    </div>
-  <?php endif; ?>
-
-  <!-- ══════════ REQUESTS TABLE (Admin/BranchMgr) ══════════ -->
-  <?php if (!$isRegularUser && !empty($recentRequests)): ?>
-    <div class="section-title" style="margin-top:<?php echo !empty($stats) ? '44px' : '24px'; ?>;">
-      <h2><i class="fas fa-inbox" style="color:#3b82f6;"></i> آخر طلبات الموقع</h2>
-      <div class="line"></div>
-      <span
-        style="background:#ef4444;color:#fff;font-size:.72rem;font-weight:700;padding:3px 10px;border-radius:20px;"><?php echo count($recentRequests); ?></span>
-    </div>
-    <div class="req-wrap fade-up-d2 fade-up">
-      <div class="req-card">
-        <div class="req-head">
-          <h3><i class="fas fa-filter"></i> تصفية الطلبات</h3>
-          <div class="req-filters">
-            <button class="rfbtn active" data-filter="all" onclick="filterReq(this,'all')">الكل</button>
-            <button class="rfbtn" data-filter="individual" onclick="filterReq(this,'individual')"><i
-                class="fas fa-user"></i> أفراد</button>
-            <button class="rfbtn" data-filter="investor" onclick="filterReq(this,'investor')"><i
-                class="fas fa-chart-line"></i> مستثمرون</button>
-          </div>
-        </div>
-        <div class="req-body">
-          <div style="overflow-x:auto;">
-            <table class="req-table">
-              <thead>
-                <tr>
-                  <th>النوع</th>
-                  <th>الاسم</th>
-                  <th>الهاتف</th>
-                  <th>المهنة والخبرة</th>
-                  <th>التاريخ</th>
-                  <th style="color:#8b5cf6;"><i class="fas fa-magic"></i> تدقيق</th>
-                </tr>
-              </thead>
-              <tbody>
-                <?php foreach ($recentRequests as $req): ?>
-                  <tr class="req-row" data-type="<?php echo $req['request_type']; ?>">
-                    <td>
-                      <?php if ($req['request_type'] === 'individual'): ?>
-                        <span class="badge-type badge-individual"><i class="fas fa-user"></i> فرد</span>
-                      <?php else: ?>
-                        <span class="badge-type badge-investor"><i class="fas fa-chart-line"></i> مستثمر</span>
-                      <?php endif; ?>
-                    </td>
-                    <td style="font-weight:700;max-width:160px;">
-                      <?php echo htmlspecialchars($req['name'] ?: 'بدون اسم'); ?>
-                      <?php if (!empty($req['notes_json'])):
-                        $nt = json_decode($req['notes_json'], true);
-                        $ntxt = is_array($nt) && isset($nt['text']) ? $nt['text'] : (is_string($nt) ? $nt : '');
-                        if (trim($ntxt)): ?>
-                          <span title="<?php echo htmlspecialchars(trim($ntxt)); ?>"
-                            style="color:#f59e0b;cursor:help;margin-right:4px;"><i class="fas fa-comment-dots"></i></span>
-                        <?php endif; endif; ?>
-                    </td>
-                    <td dir="ltr" style="text-align:right;">
-                      <?php if ($req['phone']): ?>
-                        <a href="https://wa.me/<?php echo ltrim(preg_replace('/\s+/', '', $req['phone']), '+'); ?>"
-                          target="_blank" style="color:#22c55e;text-decoration:none;font-size:.8rem;">
-                          <i class="fab fa-whatsapp"></i> <?php echo htmlspecialchars($req['phone']); ?>
-                        </a>
-                      <?php endif; ?>
-                    </td>
-                    <td style="color:#475569;">
-                      <div style="font-weight:700;font-size:.8rem;"><?php echo htmlspecialchars($req['detail'] ?: '—'); ?>
-                      </div>
-                      <?php if ($req['experience_years']): ?>
-                        <div style="font-size:.7rem;color:#3b82f6;"><?php echo htmlspecialchars($req['experience_years']); ?>
-                          سنة خبرة</div><?php endif; ?>
-                    </td>
-                    <td style="font-size:.72rem;color:#64748b;white-space:nowrap;">
-                      <?php echo date('y/m/d H:i', strtotime($req['created_at'])); ?>
-                    </td>
-                    <td>
-                      <?php if ($req['request_type'] === 'individual'): ?>
-                        <button
-                          onclick="auditClient(<?php echo $req['id']; ?>,'<?php echo htmlspecialchars(addslashes($req['name']), ENT_QUOTES); ?>','<?php echo htmlspecialchars(addslashes($req['phone']), ENT_QUOTES); ?>','<?php echo htmlspecialchars(addslashes($req['detail']), ENT_QUOTES); ?>','<?php echo htmlspecialchars(addslashes($req['experience_years'] ?? ''), ENT_QUOTES); ?>')"
-                          class="act-btn" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);color:#fff;gap:5px;"
-                          title="تدقيق ذكي وتسجيل العميل">
-                          <i class="fas fa-magic"></i> تدقيق
-                        </button>
-                      <?php else: ?>
-                        <span style="color:#94a3b8;font-size:.72rem;">—</span>
-                      <?php endif; ?>
-                    </td>
-                  </tr>
-                <?php endforeach; ?>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-  <?php endif; ?>
-
-  <!-- ══════════ FEATURE CARDS ══════════ -->
-  <div class="section-title" style="margin-top:36px;">
-    <h2><i class="fas fa-th-large" style="color:#8b5cf6;"></i>
-      <?php echo $isRegularUser ? 'أدواتك' : 'ميزات النظام'; ?>
-    </h2>
-    <div class="line"></div>
-  </div>
-
-  <div class="cards-wrap">
-    <?php if (empty($visibleCards) && $isRegularUser): ?>
-      <div class="empty-features">
-        <i class="fas fa-lock"></i>
-        <p style="font-weight:700;color:#64748b;">لم يتم تفعيل أي ميزات لحسابك بعد</p>
-        <p style="font-size:.85rem;margin-top:6px;">تواصل مع مدير النظام لتفعيل الأدوات اللازمة</p>
-      </div>
-    <?php else: ?>
-      <div class="cards-grid">
-        <?php $i = 0;
-        foreach ($visibleCards as $key => $c):
-          $i++; ?>
-          <div class="feat-card fade-up"
-            style="--card-grad:<?php echo $c['grad']; ?>;--card-shadow:<?php echo $c['shadow']; ?>;--card-grad-raw:<?php echo $c['grad']; ?>;animation-delay:<?php echo ($i * 0.05); ?>s;">
-            <div class="card-icon-wrap"><i class="fas <?php echo $c['icon']; ?>"></i></div>
-            <div class="card-title"><?php echo $c['title']; ?></div>
-            <div class="card-desc"><?php echo $c['desc']; ?></div>
-            <?php
-            $isBtn = (strpos($c['action'], 'data-bs-toggle') !== false) || (strpos($c['action'], 'onclick') !== false);
-            $tag = $isBtn ? 'button type="button"' : 'a';
-            $closeTag = $isBtn ? 'button' : 'a';
-            ?>
-            <<?php echo $tag; ?> class="feat-btn" <?php echo $c['action']; ?>>
-              <i class="fas fa-arrow-left"></i> <?php echo $c['label']; ?>
-            </<?php echo $closeTag; ?>>
-          </div>
-        <?php endforeach; ?>
-      </div>
-    <?php endif; ?>
-  </div>
-
-  <!-- ══════════ ADMIN SYSTEM SECTION ══════════ -->
-  <?php if ($isAdmin): ?>
-    <div class="section-title">
-      <h2><i class="fas fa-cog" style="color:#ef4444;"></i> إدارة النظام</h2>
-      <div class="line"></div>
-    </div>
-    <div class="cards-wrap" style="padding-top:0;">
-      <div class="admin-grid">
-        <a href="manage-staff.php" class="admin-card">
-          <div class="admin-icon" style="background:linear-gradient(135deg,#ef4444,#dc2626);"><i
-              class="fas fa-users-cog"></i></div>
-          <div>
-            <div class="admin-lbl">إدارة الموظفين</div>
-            <div class="admin-sub">الصلاحيات والفروع والميزات</div>
-          </div>
-        </a>
-        <a href="company-settings.php" class="admin-card">
-          <div class="admin-icon" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);"><i
-              class="fas fa-sliders-h"></i></div>
-          <div>
-            <div class="admin-lbl">إعدادات النماذج</div>
-            <div class="admin-sub">تعديل رسائل وحقول الوكالة</div>
-          </div>
-        </a>
-
-        <a href="messages.php" class="admin-card">
-          <div class="admin-icon" style="background:linear-gradient(135deg,#06b6d4,#0891b2);"><i
-              class="fas fa-envelope"></i></div>
-          <div>
-            <div class="admin-lbl">الرسائل الداخلية</div>
-            <div class="admin-sub">تواصل الفريق</div>
-          </div>
-        </a>
-      </div>
-    </div>
-  <?php endif; ?>
-
-  <?php require 'includes/staff-footer.php'; ?>
-
-  <!-- Include Modals for the Cards -->
-  <?php
-  // 1. Modals for Adding
-  if (hasFeature('register_company', $isRegularUser, $userFeatures) && file_exists('includes/company-register-modal.php')) {
-    require_once 'includes/company-register-modal.php';
-  }
-  if (hasFeature('register_vacancy', $isRegularUser, $userFeatures) && file_exists('includes/vacancy-register-modal.php')) {
-    require_once 'includes/vacancy-register-modal.php';
-  }
-
-  // 2. Modals for Browsing (The new SPA Modals)
-  if (hasFeature('advanced_search', $isRegularUser, $userFeatures) && file_exists('includes/components/advanced-search-modal.php')) {
-    require_once 'includes/components/advanced-search-modal.php';
-  }
-  if (hasFeature('companies_list', $isRegularUser, $userFeatures) && file_exists('includes/components/companies-modal.php')) {
-    require_once 'includes/components/companies-modal.php';
-  }
-  if (hasFeature('vacancies_board', $isRegularUser, $userFeatures) && file_exists('includes/components/vacancies-modal.php')) {
-    require_once 'includes/components/vacancies-modal.php';
-
-    // Vacancies modal relies on the detailed modal for viewing
-    if (file_exists('includes/components/vacancy-modal.php')) {
-      require_once 'includes/components/vacancy-modal.php';
-    }
-  }
-  if (hasFeature('generate_card', $isRegularUser, $userFeatures) && file_exists('includes/components/print-basket-modal.php')) {
-    require_once 'includes/components/print-basket-modal.php';
-  }
-  // Quick entry & incomplete list modals
-  if (file_exists('includes/quick-entry-modal.php')) require_once 'includes/quick-entry-modal.php';
-  if (file_exists('includes/incomplete-clients-modal.php')) require_once 'includes/incomplete-clients-modal.php';
-  ?>
-
-  <!-- ══════════ REQUEST DETAIL MODAL ══════════ -->
-  <div id="requestModal"
-    style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);overflow-y:auto;"
-    onclick="if(event.target===this)closeRequestModal()">
-    <div
-      style="max-width:700px;margin:40px auto;background:#fff;border-radius:20px;box-shadow:0 25px 60px rgba(0,0,0,.3);overflow:hidden;">
-      <div id="modalHeader"
-        style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;padding:22px 26px;position:relative;">
-        <button onclick="closeRequestModal()"
-          style="position:absolute;left:14px;top:14px;background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;"><i
-            class="fas fa-times"></i></button>
-        <div style="display:flex;align-items:center;gap:14px;">
-          <div id="modalPhoto"></div>
-          <div>
-            <h3 id="modalName" style="font-size:1.2rem;font-weight:800;margin:0;"></h3>
-            <div id="modalMeta" style="display:flex;flex-wrap:wrap;gap:10px;font-size:.8rem;opacity:.9;margin-top:4px;">
+<body class="text-slate-800">
+    <!-- ====== HEADER ====== -->
+    <nav class="fixed top-0 w-full bg-dark-900/95 backdrop-blur-md z-50 border-b border-slate-700">
+        <div class="container mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="text-2xl font-black text-white flex items-center gap-3">
+                <i class="fas fa-handshake text-blue-500"></i> Serena
             </div>
-          </div>
+            <div class="hidden md:flex gap-8 items-center text-white/80 font-bold">
+                <a href="#services" class="hover:text-white transition">الخدمات</a>
+                <a href="#serena-group" class="hover:text-white transition">عن المجموعة</a>
+                <a href="#contact" class="hover:text-white transition">تواصل</a>
+            </div>
+            <button class="md:hidden text-white text-2xl"><i class="fas fa-bars"></i></button>
         </div>
-      </div>
-      <div id="modalBody" style="padding:22px 26px;"></div>
-      <div id="modalFooter"
-        style="padding:14px 26px;border-top:1px solid #e5e7eb;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
-      </div>
-    </div>
-  </div>
+    </nav>
 
-  <script>
-    // ── Requests filter ──────────────────────────────────────────
-    function filterReq(btn, type) {
-      document.querySelectorAll('.rfbtn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.querySelectorAll('.req-row').forEach(row => {
-        row.style.display = (type === 'all' || row.dataset.type === type) ? '' : 'none';
-      });
-    }
+    <!-- ====== HERO SECTION ====== -->
+    <section class="relative min-h-[90vh] flex flex-col justify-center overflow-hidden hero-bg pt-20">
+        <!-- Floating Elements -->
+        <div class="absolute top-1/4 right-[10%] w-24 h-24 bg-blue-500/20 rounded-full blur-2xl animate-float"></div>
+        <div class="absolute bottom-1/3 left-[15%] w-32 h-32 bg-purple-500/20 rounded-full blur-3xl animate-float" style="animation-delay: 2s;"></div>
 
-    // ── Request modal ────────────────────────────────────────────
-    function openRequestModal(id, type) {
-      document.getElementById('requestModal').style.display = 'block';
-      document.body.style.overflow = 'hidden';
-      document.getElementById('modalBody').innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af;"><i class="fas fa-spinner fa-spin" style="font-size:2rem;"></i><p style="margin-top:10px">جاري التحميل...</p></div>';
-      document.getElementById('modalFooter').innerHTML = '';
-      document.getElementById('modalName').textContent = '';
-      document.getElementById('modalMeta').innerHTML = '';
-      document.getElementById('modalPhoto').innerHTML = '';
-      fetch('api/get-request-detail.php?id=' + id + '&type=' + type)
-        .then(r => r.json())
-        .then(json => {
-          if (!json.success) { document.getElementById('modalBody').innerHTML = '<p style="color:#ef4444;text-align:center;padding:20px;">' + (json.message || 'خطأ') + '</p>'; return; }
-          if (type === 'individual') renderIndividualModal(json.data);
-          else if (type === 'investor') renderInvestorModal(json.data);
-          else renderGenericModal(json.data);
-        })
-        .catch(() => { document.getElementById('modalBody').innerHTML = '<p style="color:#ef4444;text-align:center;padding:20px;">خطأ في الاتصال</p>'; });
-    }
-    function closeRequestModal() {
-      document.getElementById('requestModal').style.display = 'none';
-      document.body.style.overflow = '';
-    }
+        <div class="container mx-auto px-6 relative z-10 pt-20 pb-16 flex flex-col items-center text-center">
+            <!-- Badge -->
+            <div class="glass-card rounded-full px-5 py-2 mb-8 inline-flex items-center gap-2 reveal">
+                <span class="relative flex h-3 w-3">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                </span>
+                <span class="text-white/90 text-sm font-bold tracking-wide">نحن هنا لخدمتك</span>
+            </div>
 
-    function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
-    function infoBox(label, value) {
-      return '<div style="background:#f8fafc;border-radius:8px;padding:10px;border:1px solid #e2e8f0;"><div style="font-size:.7rem;color:#64748b;margin-bottom:2px;">' + esc(label) + '</div><div style="font-weight:700;color:#1e293b;font-size:.85rem;">' + esc(value || '—') + '</div></div>';
-    }
-    function sectionTitle(icon, color, text) {
-      return '<div style="font-size:.9rem;font-weight:700;color:#1e40af;margin:14px 0 8px;display:flex;align-items:center;gap:7px;border-bottom:2px solid #eff6ff;padding-bottom:6px;"><i class="fas ' + icon + '" style="color:' + color + '"></i> ' + text + '</div>';
-    }
+            <h1 class="text-5xl md:text-6xl lg:text-7xl font-black text-white leading-tight mb-6 reveal">
+                حلول التوظيف <span class="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-blue-200">الذكية</span>
+            </h1>
+            
+            <p class="text-lg md:text-xl text-slate-200/80 max-w-2xl mx-auto mb-10 leading-relaxed reveal">
+                نربط بين المواهب والفرص، ونخلق مستقبلاً مهنياً مزدهراً لملايين الأفراد والشركات
+            </p>
 
-    function renderIndividualModal(d) {
-      document.getElementById('modalName').textContent = d.name || 'بدون اسم';
-      let meta = '';
-      if (d.code) meta += '<span><i class="fas fa-hashtag"></i> ' + esc(d.code) + '</span>';
-      if (d.profession) meta += '<span><i class="fas fa-briefcase"></i> ' + esc(d.profession) + '</span>';
-      if (d.age) meta += '<span><i class="fas fa-birthday-cake"></i> ' + d.age + ' سنة</span>';
-      if (d.nationality) meta += '<span><i class="fas fa-flag"></i> ' + esc(d.nationality) + '</span>';
-      if (d.status) meta += '<span><i class="fas fa-circle"></i> ' + esc(d.status) + '</span>';
-      document.getElementById('modalMeta').innerHTML = meta;
-      document.getElementById('modalPhoto').innerHTML = d.photo
-        ? '<img src="' + esc(d.photo) + '" style="width:60px;height:60px;border-radius:12px;object-fit:cover;border:2px solid rgba(255,255,255,.3)" onerror="this.remove()">'
-        : '<div style="width:60px;height:60px;border-radius:12px;background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;font-size:1.6rem;"><i class="fas fa-user-tie"></i></div>';
+            <div class="flex flex-col sm:flex-row items-center gap-4 reveal">
+                <a href="#services" class="group relative px-8 py-4 bg-white text-blue-900 font-bold text-lg rounded-full overflow-hidden shadow-[0_0_40px_rgba(255,255,255,0.3)] hover:shadow-[0_0_60px_rgba(255,255,255,0.5)] transition-all duration-300">
+                    <span class="relative z-10 flex items-center gap-2">
+                        استكشف الخدمات <i class="fas fa-arrow-left transition-transform group-hover:translate-x-1"></i>
+                    </span>
+                </a>
+                <a href="#contact" class="px-8 py-4 glass-card text-white font-bold text-lg rounded-full hover:bg-white/10 transition-colors duration-300 flex items-center gap-2">
+                    تواصل معنا <i class="fas fa-headset"></i>
+                </a>
+            </div>
+            
+            <!-- Trust Indicators -->
+            <div class="mt-16 pt-8 border-t border-white/10 flex flex-wrap justify-center gap-x-8 gap-y-4 text-white/50 text-sm font-semibold reveal">
+                <div class="flex items-center gap-2"><i class="fas fa-shield-alt text-blue-400"></i> آمن وموثوق</div>
+                <div class="flex items-center gap-2"><i class="fas fa-globe text-blue-400"></i> تغطية عالمية</div>
+                <div class="flex items-center gap-2"><i class="fas fa-handshake text-blue-400"></i> شراكات استراتيجية</div>
+            </div>
+        </div>
 
-      let html = sectionTitle('fa-user', '#3b82f6', 'البيانات الشخصية');
-      html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:10px;">';
-      html += infoBox('الاسم', d.name);
-      if (d.name_en) html += infoBox('Name', d.name_en);
-      if (d.gender) html += infoBox('الجنس', d.gender);
-      if (d.nationality) html += infoBox('الجنسية', d.nationality);
-      if (d.dob) html += infoBox('تاريخ الميلاد', d.dob + (d.age ? ' (' + d.age + ' سنة)' : ''));
-      if (d.country) html += infoBox('البلد', d.country);
-      if (d.marital) html += infoBox('الحالة الاجتماعية', d.marital);
-      if (d.status) html += infoBox('الحالة', d.status);
-      html += '</div>';
-      html += sectionTitle('fa-phone-alt', '#10b981', 'التواصل');
-      html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:10px;">';
-      if (d.phone) html += infoBox('الهاتف', d.phone);
-      if (d.email) html += infoBox('البريد', d.email);
-      html += '</div>';
-      if (d.profession || d.experience) {
-        html += sectionTitle('fa-briefcase', '#f59e0b', 'المهنة والخبرة');
-        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:10px;">';
-        if (d.profession) html += infoBox('المهنة', d.profession);
-        if (d.experience) html += infoBox('سنوات الخبرة', d.experience + ' سنة');
-        if (d.salary) html += infoBox('الراتب المتوقع', d.salary);
-        if (d.education) html += infoBox('المستوى التعليمي', d.education);
-        html += '</div>';
-      }
-      if (d.work_history && d.work_history.length) {
-        html += sectionTitle('fa-history', '#8b5cf6', 'الخبرات السابقة');
-        d.work_history.forEach(j => {
-          let title = j.title || j.position || ''; let dur = j.duration || j.years || ''; if (!title) return;
-          html += '<div style="padding:10px;margin-bottom:6px;background:#faf5ff;border-radius:8px;border-right:3px solid #8b5cf6;">';
-          html += '<div style="font-weight:700;color:#1e293b;font-size:.88rem;">' + esc(title) + '</div>';
-          if (dur) html += '<div style="color:#64748b;font-size:.77rem;margin-top:2px;"><i class="fas fa-clock"></i> ' + dur + ' سنة</div>';
-          html += '</div>';
-        });
-      }
-      document.getElementById('modalBody').innerHTML = html;
-      let footer = '<a href="client-register.php?id=' + d.id + '" style="display:inline-flex;align-items:center;gap:6px;padding:10px 22px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;border-radius:10px;font-weight:700;font-size:.85rem;text-decoration:none;"><i class="fas fa-edit"></i> تعديل</a>';
-      if (d.phone) { let p = d.phone.replace(/\s+/g, '').replace(/^\+/, ''); footer += '<a href="https://wa.me/' + p + '" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:10px 22px;background:#25d366;color:#fff;border-radius:10px;font-weight:700;font-size:.85rem;text-decoration:none;"><i class="fab fa-whatsapp"></i> واتساب</a>'; }
-      footer += '<button onclick="closeRequestModal()" style="display:inline-flex;align-items:center;gap:6px;padding:10px 22px;background:#f1f5f9;color:#64748b;border-radius:10px;font-weight:700;font-size:.85rem;border:none;cursor:pointer;font-family:inherit;"><i class="fas fa-times"></i> إغلاق</button>';
-      document.getElementById('modalFooter').innerHTML = footer;
-    }
-
-    function renderInvestorModal(d) {
-      document.getElementById('modalName').textContent = d.name || 'بدون اسم';
-      document.getElementById('modalMeta').innerHTML = (d.investor_type ? '<span><i class="fas fa-chart-line"></i> ' + esc(d.investor_type) + '</span>' : '') + (d.country ? '<span><i class="fas fa-globe"></i> ' + esc(d.country) + '</span>' : '');
-      document.getElementById('modalPhoto').innerHTML = '<div style="width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#d97706);display:flex;align-items:center;justify-content:center;font-size:1.4rem;color:#fff;font-weight:800;">' + (d.name ? esc(d.name.charAt(0)) : 'م') + '</div>';
-      let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
-      html += infoBox('الهاتف', d.phone);
-      html += infoBox('البريد', d.email);
-      html += infoBox('نوع الاستثمار', d.investor_type);
-      html += infoBox('الدولة', d.country);
-      html += infoBox('مبلغ الاستثمار', d.investment_amount);
-      html += infoBox('التاريخ', d.created_at);
-      html += '</div>';
-      if (d.message) html += '<div style="margin-top:14px;padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;font-size:.82rem;color:#78350f;line-height:1.7;"><strong><i class="fas fa-comment-alt"></i> الرسالة:</strong><br>' + esc(d.message) + '</div>';
-      document.getElementById('modalBody').innerHTML = html;
-      let footer = '';
-      if (d.phone) { let p = d.phone.replace(/\s+/g, '').replace(/^\+/, ''); footer += '<a href="https://wa.me/' + p + '" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:10px 22px;background:#25d366;color:#fff;border-radius:10px;font-weight:700;font-size:.85rem;text-decoration:none;"><i class="fab fa-whatsapp"></i> واتساب</a>'; }
-      footer += '<button onclick="closeRequestModal()" style="padding:10px 22px;background:#f1f5f9;color:#64748b;border-radius:10px;font-weight:700;border:none;cursor:pointer;font-family:inherit;">إغلاق</button>';
-      document.getElementById('modalFooter').innerHTML = footer;
-    }
-
-    function renderGenericModal(d) {
-      let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;">';
-      for (let key in d) { if (d[key] && typeof d[key] === 'string' && d[key].length < 300) html += infoBox(key, d[key]); }
-      html += '</div>';
-      document.getElementById('modalBody').innerHTML = html;
-      document.getElementById('modalName').textContent = d.name_ar || d.name || 'طلب';
-      document.getElementById('modalFooter').innerHTML = '<button onclick="closeRequestModal()" style="padding:10px 22px;background:#f1f5f9;color:#64748b;border-radius:10px;font-weight:700;border:none;cursor:pointer;font-family:inherit;">إغلاق</button>';
-    }
-
-    // ── Role dropdown in header (if quick add buttons exist) ──
-    document.addEventListener('DOMContentLoaded', function () {
-      const roleEl = document.getElementById('role');
-      if (roleEl) {
-        roleEl.addEventListener('change', function () {
-          if (typeof toggleFeaturesSection === 'function') toggleFeaturesSection(this.value);
-        })
-      }
-    });
-
-    // ── إضافة المرشح إلى سلة الطباعة ────────────────────────────────
-    function addToBasket(clientId) {
-      const note = prompt("📝 هل تود إضافة رابط لشاغر معين أو كتابة ملاحظة قبل إضافته لسلة الطباعة؟\n(اتركها فارغة في حال لم ترغب بذلك)");
-      if (note === null) return; // تم إلغاء الأمر
-
-      const formData = new FormData();
-      formData.append('client_id', clientId);
-      formData.append('note', note);
-
-      fetch('api/add-to-basket.php', {
-        method: 'POST',
-        body: formData
-      })
-        .then(r => r.json())
-        .then(data => {
-          if (data.success) {
-            alert('✅ ' + data.message + '\nيمكنك العثور عليه في مركز الطباعة.');
-          } else {
-            alert('❌ ' + data.message);
-          }
-        })
-        .catch(err => {
-          console.error(err);
-          alert('حدث خطأ في الاتصال بالخادم. يرجى المحاولة لاحقاً.');
-        });
-    }
-
-    // ══════════════════════════════════════════════════════
-    // ── زر التدقيق الذكي — Audit Button  ─────────────────
-    // ══════════════════════════════════════════════════════
-    async function auditClient(clientId, name, phone, profession, expYears) {
-      // 1. فتح المودال وتعبئة البيانات الأساسية من الزائر
-      openQuickClientModal({
-        id: clientId,
-        unique_code: '',
-        name_ar: name,
-        phone_primary: phone,
-        profession_primary: profession,
-        profession_primary_years: expYears || '',
-        internal_notes: '',
-        other_info: '',
-        nationality: '',
-        gender: '',
-        residence: '',
-        target_vacancies_json: '[]',
-        work_history_json: '[]',
-        cv_file: null
-      });
-
-      // تعديل عنوان المودال ليوضح أننا في وضع التدقيق
-      document.getElementById('qcm_modal_title').textContent = 'تدقيق ذكي — تسجيل العميل';
-      document.getElementById('qcm_modal_subtitle').textContent = 'جاري استخراج البيانات من السيرة الذاتية...';
-
-      // 2. جلب مسار السيرة الذاتية المرفوعة مسبقاً للزائر
-      try {
-        const r = await fetch('api/get-visitor-cv.php?client_id=' + clientId);
-        const info = await r.json();
-
-        if (!info.cv_path) {
-          document.getElementById('qcm_modal_subtitle').textContent = 'لا توجد سيرة ذاتية مرفوعة — أدخل البيانات يدوياً أو ارفع السيرة من زر الذكاء الاصطناعي';
-          return;
-        }
-
-        // عرض السيرة الذاتية في حقلها مع زر عرض منبثق
-        const cvEl = document.getElementById('qcm_existing_cv');
-        if (cvEl) {
-          cvEl.classList.remove('hidden');
-          cvEl.innerHTML = `
-                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                    <i class="fas fa-file-pdf" style="color:#ef4444;font-size:1.3rem;"></i>
-                    <span style="font-weight:700;font-size:.85rem;">السيرة الذاتية المرفوعة:</span>
-                    <a href="${info.cv_path}" target="_blank"
-                       style="display:inline-flex;align-items:center;gap:5px;background:#3b82f6;color:#fff;padding:5px 12px;border-radius:8px;font-size:.8rem;font-weight:700;text-decoration:none;">
-                        <i class="fas fa-external-link-alt"></i> فتح في نافذة جديدة
-                    </a>
-                    <button onclick="window.open('${info.cv_path}','_blank','width=900,height=700,scrollbars=yes')"
-                            style="display:inline-flex;align-items:center;gap:5px;background:#8b5cf6;color:#fff;border:none;padding:5px 12px;border-radius:8px;font-size:.8rem;font-weight:700;cursor:pointer;">
-                        <i class="fas fa-eye"></i> عرض منبثق
-                    </button>
+        <!-- Ticker -->
+        <div class="absolute bottom-0 left-0 w-full ticker-wrap py-3 z-20">
+            <div class="ticker-track">
+                <div class="flex gap-12 items-center px-6 text-white/80 text-sm font-bold shrink-0">
+                    <span><i class="fas fa-star text-yellow-500 mx-2"></i> أفضل وكالة توظيف في الشرق الأوسط</span>
+                    <span><i class="fas fa-star text-yellow-500 mx-2"></i> خدمة 24/7</span>
+                    <span><i class="fas fa-star text-yellow-500 mx-2"></i> +35000 موظف مسجل</span>
+                    <span><i class="fas fa-star text-yellow-500 mx-2"></i> شراكات مع أكبر الشركات</span>
                 </div>
-            `;
-        }
+                <div class="flex gap-12 items-center px-6 text-white/80 text-sm font-bold shrink-0" aria-hidden="true">
+                    <span><i class="fas fa-star text-yellow-500 mx-2"></i> أفضل وكالة توظيف في الشرق الأوسط</span>
+                    <span><i class="fas fa-star text-yellow-500 mx-2"></i> خدمة 24/7</span>
+                    <span><i class="fas fa-star text-yellow-500 mx-2"></i> +35000 موظف مسجل</span>
+                    <span><i class="fas fa-star text-yellow-500 mx-2"></i> شراكات مع أكبر الشركات</span>
+                </div>
+            </div>
+        </div>
+    </section>
 
-        // 3. إرسال مسار السيرة الذاتية إلى parse-cv-gemini.php مباشرة
-        const fd = new FormData();
-        fd.append('server_cv_path', info.cv_path);
-        try { const c = localStorage.getItem('ai_corrections'); if (c) fd.append('past_corrections', c); } catch (e) { }
+    <!-- ====== THE SERENA GROUP ====== -->
+    <section class="bg-dark-900 py-24 relative overflow-hidden text-white" id="serena-group">
+        <!-- Background accents -->
+        <div class="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-900/20 rounded-full blur-[100px] pointer-events-none"></div>
+        <div class="absolute bottom-0 left-0 w-[600px] h-[600px] bg-purple-900/10 rounded-full blur-[120px] pointer-events-none"></div>
+        
+        <div class="container mx-auto px-6 relative z-10">
+            <div class="flex flex-col lg:flex-row gap-16 items-center">
+                <!-- Text Content -->
+                <div class="w-full lg:w-5/12 reveal">
+                    <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-blue-500/30 bg-blue-500/10 text-blue-300 text-sm font-bold mb-6">
+                        <i class="fas fa-crown"></i> التاريخ والريادة
+                    </div>
+                    <h2 class="text-4xl lg:text-5xl font-black mb-6 leading-tight">
+                        مجموعة سيرينا<br>
+                        <span class="text-gradient-premium">عقود من النجاح والابتكار</span>
+                    </h2>
+                    <p class="text-slate-400 text-lg leading-relaxed mb-8">
+                        منذ عام 2000، نقدم حلولاً متكاملة في مجالات التوظيف والاستثمار والتعليم والإعلام والنقل والخدمات اللوجستية.
+                    </p>
+                    
+                    <div class="grid grid-cols-2 gap-6 mb-10">
+                        <div class="border-r-4 border-blue-500 pr-4">
+                            <div class="text-3xl font-black text-white mb-1">35000+</div>
+                            <div class="text-sm font-bold text-slate-400 uppercase tracking-wider">موظف مسجل</div>
+                        </div>
+                        <div class="border-r-4 border-purple-500 pr-4">
+                            <div class="text-3xl font-black text-white mb-1">26</div>
+                            <div class="text-sm font-bold text-slate-400 uppercase tracking-wider">سنة من الخبرة</div>
+                        </div>
+                    </div>
 
-        const btn = document.getElementById('qcm_ai_extract_btn');
-        const loader = document.getElementById('qcm_ai_loader');
-        if (loader) loader.classList.remove('hidden');
-        document.getElementById('qcm_modal_subtitle').textContent = '⏳ جاري تحليل السيرة الذاتية بالذكاء الاصطناعي...';
+                    <a href="#" class="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-800 hover:from-blue-500 hover:to-blue-700 text-white rounded-xl font-bold transition-all shadow-lg hover:shadow-blue-500/25">
+                        المزيد عن المجموعة
+                        <i class="fas fa-arrow-left"></i>
+                    </a>
+                </div>
 
-        const res = await fetch('api/parse-cv-gemini.php', { method: 'POST', body: fd });
-        const data = await res.json();
-        if (loader) loader.classList.add('hidden');
+                <!-- Glass Grid / Sectors -->
+                <div class="w-full lg:w-7/12 grid grid-cols-1 sm:grid-cols-2 gap-4 lg:gap-6">
+                    <!-- Sector 1 -->
+                    <div class="dark-glass rounded-2xl p-6 lg:p-8 reveal shadow-2xl relative overflow-hidden group">
+                        <div class="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                        <div class="w-14 h-14 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center text-2xl mb-5 border border-blue-500/30">
+                            <i class="fas fa-microphone-alt"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-white mb-2">الإعلام والاتصالات</h3>
+                        <p class="text-slate-400 text-sm leading-relaxed">محطات إذاعية وتلفزيونية رائدة في المنطقة</p>
+                    </div>
+                    <!-- Sector 2 -->
+                    <div class="dark-glass rounded-2xl p-6 lg:p-8 reveal shadow-2xl relative overflow-hidden group" style="animation-delay: 100ms;">
+                        <div class="absolute inset-0 bg-gradient-to-br from-green-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                        <div class="w-14 h-14 rounded-xl bg-green-500/20 text-green-400 flex items-center justify-center text-2xl mb-5 border border-green-500/30">
+                            <i class="fas fa-ship"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-white mb-2">النقل واللوجستيات</h3>
+                        <p class="text-slate-400 text-sm leading-relaxed">خدمات شحن وتوزيع عالمية</p>
+                    </div>
+                    <!-- Sector 3 -->
+                    <div class="dark-glass rounded-2xl p-6 lg:p-8 reveal shadow-2xl relative overflow-hidden group" style="animation-delay: 200ms;">
+                        <div class="absolute inset-0 bg-gradient-to-br from-amber-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                        <div class="w-14 h-14 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-2xl mb-5 border border-amber-500/30">
+                            <i class="fas fa-balance-scale"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-white mb-2">الاستشارات القانونية</h3>
+                        <p class="text-slate-400 text-sm leading-relaxed">خدمات قانونية متخصصة</p>
+                    </div>
+                    <!-- Sector 4 -->
+                    <div class="dark-glass rounded-2xl p-6 lg:p-8 reveal shadow-2xl relative overflow-hidden group" style="animation-delay: 300ms;">
+                        <div class="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                        <div class="w-14 h-14 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center text-2xl mb-5 border border-purple-500/30">
+                            <i class="fas fa-graduation-cap"></i>
+                        </div>
+                        <h3 class="text-xl font-bold text-white mb-2">التعليم والتطوير</h3>
+                        <p class="text-slate-400 text-sm leading-relaxed">برامج تدريبية عالية المستوى</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
 
-        if (!data.success) {
-          document.getElementById('qcm_modal_subtitle').textContent = '⚠️ ' + (data.error || 'فشل الاستخراج — أدخل البيانات يدوياً');
-          return;
-        }
+    <!-- ====== SERVICES SECTION ====== -->
+    <section id="services" class="py-24 bg-slate-50 relative">
+        <div class="container mx-auto px-6">
+            <div class="text-center max-w-2xl mx-auto mb-16 reveal">
+                <span class="text-blue-600 font-black tracking-wider uppercase text-sm bg-blue-100 px-4 py-1.5 rounded-full inline-block mb-4">خدماتنا الرئيسية</span>
+                <h2 class="text-4xl md:text-5xl font-black text-slate-800 mb-6">ماذا نقدم لك</h2>
+                <div class="w-20 h-1.5 bg-blue-600 mx-auto rounded-full mb-6"></div>
+                <p class="text-lg text-slate-500">حلول شاملة لكل احتياجاتك الوظيفية والاستثمارية</p>
+            </div>
 
-        // 4. تعبئة جميع الحقول من نتيجة الذكاء الاصطناعي
-        const d = data.data;
-        function sv(id, val) { const el = document.getElementById(id); if (el && val != null && val !== '') el.value = val; }
-        sv('qcm_name_ar', d.name_ar || name);
-        sv('qcm_phone', d.phone_primary || phone);
-        sv('qcm_age', d.age);
-        sv('qcm_residence', d.residence);
-        sv('qcm_profession', d.profession_primary || profession);
-        sv('qcm_prof_years', d.profession_primary_years || expYears);
-        sv('qcm_notes', d.internal_notes);
-        sv('qcm_other_info', d.other_info);
-        sv('qcm_target1', (d.target_vacancies || [])[0] || d.suggested_vacancy || '');
-        sv('qcm_target2', (d.target_vacancies || [])[1] || '');
-        sv('qcm_target3', (d.target_vacancies || [])[2] || '');
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto">
+                <!-- Card 1 -->
+                <a href="#" class="service-card reveal flex flex-col h-full bg-white shadow-xl shadow-slate-200/50 p-8 group rounded-2xl">
+                    <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 text-white flex items-center justify-center text-2xl mb-6 shadow-lg shadow-blue-500/30 group-hover:scale-110 transition-transform duration-300">
+                        <i class="fas fa-user-tie"></i>
+                    </div>
+                    <h3 class="text-2xl font-black text-slate-800 mb-4">للأفراد</h3>
+                    <p class="text-slate-500 mb-6 leading-relaxed flex-grow">جد الوظيفة التي تناسبك من آلاف الفرص</p>
+                    <ul class="space-y-3 mb-8">
+                        <li class="flex items-center gap-3 text-sm text-slate-600 font-semibold"><i class="fas fa-check-circle text-blue-500"></i> بحث متقدم</li>
+                        <li class="flex items-center gap-3 text-sm text-slate-600 font-semibold"><i class="fas fa-check-circle text-blue-500"></i> استشارات مهنية</li>
+                        <li class="flex items-center gap-3 text-sm text-slate-600 font-semibold"><i class="fas fa-check-circle text-blue-500"></i> دعم 24/7</li>
+                    </ul>
+                    <div class="mt-auto flex items-center gap-2 text-blue-600 font-bold group-hover:gap-4 transition-all w-full pt-4 border-t border-slate-100">
+                        اعرف المزيد <i class="fas fa-arrow-left mt-0.5"></i>
+                    </div>
+                </a>
 
-        if (d.gender && typeof qcmSetGender === 'function') qcmSetGender(d.gender);
-        if (d.nationality) {
-          const ns = document.getElementById('qcm_nationality');
-          if (ns) Array.from(ns.options).forEach(o => { if (d.nationality.includes(o.value)) ns.value = o.value; });
-          if (typeof qcmToggleSyriaProvinces === 'function') qcmToggleSyriaProvinces();
-        }
+                <!-- Card 2 -->
+                <a href="#" class="service-card reveal flex flex-col h-full bg-white shadow-xl shadow-slate-200/50 p-8 group rounded-2xl" style="animation-delay: 100ms;">
+                    <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-white flex items-center justify-center text-2xl mb-6 shadow-lg shadow-emerald-500/30 group-hover:scale-110 transition-transform duration-300">
+                        <i class="fas fa-building"></i>
+                    </div>
+                    <h3 class="text-2xl font-black text-slate-800 mb-4">للشركات</h3>
+                    <p class="text-slate-500 mb-6 leading-relaxed flex-grow">جند أفضل المواهب لفريقك</p>
+                    <ul class="space-y-3 mb-8">
+                        <li class="flex items-center gap-3 text-sm text-slate-600 font-semibold"><i class="fas fa-check-circle text-emerald-500"></i> تسويق للشواغر</li>
+                        <li class="flex items-center gap-3 text-sm text-slate-600 font-semibold"><i class="fas fa-check-circle text-emerald-500"></i> فحص المرشحين</li>
+                        <li class="flex items-center gap-3 text-sm text-slate-600 font-semibold"><i class="fas fa-check-circle text-emerald-500"></i> تقارير شاملة</li>
+                    </ul>
+                    <div class="mt-auto flex items-center gap-2 text-emerald-600 font-bold group-hover:gap-4 transition-all w-full pt-4 border-t border-slate-100">
+                        اعرف المزيد <i class="fas fa-arrow-left mt-0.5"></i>
+                    </div>
+                </a>
 
-        // الوظائف السابقة
-        const jc = document.getElementById('qcm_jobs');
-        if (jc) { jc.innerHTML = ''; (d.jobs || []).forEach(j => { if (typeof qcmAddJob === 'function') qcmAddJob({ title: j.title || '', duration: j.duration || '', location: j.location || '', tasks: j.tasks || '' }); }); }
+                <!-- Card 3 -->
+                <a href="#" class="service-card reveal flex flex-col h-full bg-white shadow-xl shadow-slate-200/50 p-8 group rounded-2xl" style="animation-delay: 200ms;">
+                    <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-700 text-white flex items-center justify-center text-2xl mb-6 shadow-lg shadow-amber-500/30 group-hover:scale-110 transition-transform duration-300">
+                        <i class="fas fa-chart-pie"></i>
+                    </div>
+                    <h3 class="text-2xl font-black text-slate-800 mb-4">للمستثمرين</h3>
+                    <p class="text-slate-500 mb-6 leading-relaxed flex-grow">استثمر في فرص مربحة آمنة</p>
+                    <ul class="space-y-3 mb-8">
+                        <li class="flex items-center gap-3 text-sm text-slate-600 font-semibold"><i class="fas fa-check-circle text-amber-500"></i> دراسات الجدوى</li>
+                        <li class="flex items-center gap-3 text-sm text-slate-600 font-semibold"><i class="fas fa-check-circle text-amber-500"></i> استشارات استثمارية</li>
+                        <li class="flex items-center gap-3 text-sm text-slate-600 font-semibold"><i class="fas fa-check-circle text-amber-500"></i> عوائد محضومة</li>
+                    </ul>
+                    <div class="mt-auto flex items-center gap-2 text-amber-600 font-bold group-hover:gap-4 transition-all w-full pt-4 border-t border-slate-100">
+                        اعرف المزيد <i class="fas fa-arrow-left mt-0.5"></i>
+                    </div>
+                </a>
 
-        // اللغات
-        if (d.languages && typeof qcmAddLang === 'function') {
-          d.languages.forEach(l => qcmAddLang(typeof l === 'string' ? l : l.name || '', typeof l === 'string' ? 'جيد' : l.level || 'جيد', ''));
-        }
+                <!-- Card 4 -->
+                <div class="service-card reveal flex flex-col h-full bg-white shadow-xl shadow-slate-200/50 p-8 group rounded-2xl relative overflow-hidden" style="animation-delay: 300ms;">
+                    <div class="absolute top-6 -right-10 w-40 bg-red-500 text-white text-sm py-2 text-center transform rotate-45 shadow-md z-30 pointer-events-none tracking-wider font-bold">
+                        قريباً
+                    </div>
+                    <div class="absolute inset-0 bg-white/70 backdrop-blur-[2px] z-20"></div>
 
-        // فتح مقطع الإضافات لرؤية النتائج
-        const extra = document.getElementById('qcm_extra_block');
-        if (extra) extra.classList.remove('hidden');
-        const arw = document.getElementById('qcm_extra_arrow');
-        if (arw) arw.style.transform = 'rotate(180deg)';
-        if (typeof qcmSetTab === 'function') qcmSetTab('tab_work');
+                    <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-700 text-white flex items-center justify-center text-2xl mb-6 shadow-lg shadow-indigo-500/30 relative z-10 opacity-50">
+                        <i class="fas fa-user-graduate"></i>
+                    </div>
+                    <h3 class="text-2xl font-black text-slate-800 mb-4 relative z-10">الدراسة بالخارج</h3>
+                    <p class="text-slate-500 mb-6 flex-grow relative z-10">برامج دراسية في أفضل الجامعات العالمية</p>
+                </div>
+            </div>
+        </div>
+    </section>
 
-        document.getElementById('qcm_modal_subtitle').textContent = '✅ تم استخراج البيانات بنجاح — راجع وعدّل ثم احفظ';
+    <!-- ====== HOW WE WORK ====== -->
+    <section class="py-24 bg-white border-y border-slate-100">
+        <div class="container mx-auto px-6">
+            <div class="text-center max-w-2xl mx-auto mb-16 reveal">
+                <h2 class="text-3xl md:text-4xl font-black text-slate-800 mb-4">كيفية عملنا</h2>
+                <div class="w-16 h-1 bg-slate-200 mx-auto rounded-full mb-4"></div>
+                <p class="text-slate-500">عملية بسيطة وفعالة في ثلاث خطوات</p>
+            </div>
 
-        // توست نجاح
-        const t = document.createElement('div');
-        t.className = 'fixed bottom-6 right-6 bg-green-500 text-white px-5 py-3 rounded-2xl font-bold shadow-2xl z-[9999] text-sm flex items-center gap-2';
-        t.innerHTML = '<i class="fas fa-check-circle"></i> تم الاستخراج بالذكاء الاصطناعي بنجاح!';
-        document.body.appendChild(t);
-        setTimeout(() => t.remove(), 3500);
+            <div class="flex flex-col md:flex-row justify-center items-center md:items-start gap-12 max-w-4xl mx-auto">
+                <div class="text-center w-full sm:w-1/3 reveal">
+                    <div class="w-20 h-20 mx-auto bg-blue-50 border-4 border-white shadow-xl shadow-blue-100 rounded-full flex items-center justify-center text-3xl text-blue-600 font-black mb-6">1</div>
+                    <h3 class="text-xl font-bold text-slate-800 mb-2">أنشئ حسابك</h3>
+                    <p class="text-slate-500 text-sm">سجل معنا في دقائق معدودة</p>
+                </div>
 
-      } catch (e) {
-        document.getElementById('qcm_modal_subtitle').textContent = '⚠️ خطأ في الاتصال: ' + e.message;
-      }
-    }
-  </script>
-  <?php require_once 'includes/client-full-profile-modal.php'; ?>
+                <div class="text-center w-full sm:w-1/3 reveal" style="animation-delay: 100ms;">
+                    <div class="w-20 h-20 mx-auto bg-blue-600 border-4 border-white shadow-xl shadow-blue-200 rounded-full flex items-center justify-center text-3xl text-white font-black mb-6">2</div>
+                    <h3 class="text-xl font-bold text-slate-800 mb-2">استكشف الفرص</h3>
+                    <p class="text-slate-500 text-sm">ابحث عن الفرصة المناسبة</p>
+                </div>
+
+                <div class="text-center w-full sm:w-1/3 reveal" style="animation-delay: 200ms;">
+                    <div class="w-20 h-20 mx-auto bg-green-500 border-4 border-white shadow-xl shadow-green-200 rounded-full flex items-center justify-center text-3xl text-white font-black mb-6">3</div>
+                    <h3 class="text-xl font-bold text-slate-800 mb-2">ابدأ مسيرتك</h3>
+                    <p class="text-slate-500 text-sm">احقق أحلامك المهنية</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ====== SECTORS ====== -->
+    <section class="py-20 bg-slate-50">
+        <div class="container mx-auto px-6">
+            <div class="flex flex-col lg:flex-row items-center justify-between gap-12 max-w-6xl mx-auto">
+                <div class="w-full lg:w-1/3 reveal">
+                    <h2 class="text-3xl font-black text-slate-800 mb-4">نعمل في جميع القطاعات</h2>
+                    <p class="text-slate-500 mb-6 leading-relaxed">خدماتنا تغطي أكثر من 50 قطاع مختلف</p>
+                </div>
+                
+                <div class="w-full lg:w-2/3 flex flex-wrap gap-4 justify-end reveal">
+                    <div class="sector-tag bg-white px-5 py-3 rounded-full border border-slate-200 shadow-sm text-slate-700 font-bold flex items-center gap-3">
+                        <i class="fas fa-hotel text-slate-400"></i> الفنادق والسياحة
+                    </div>
+                    <div class="sector-tag bg-white px-5 py-3 rounded-full border border-slate-200 shadow-sm text-slate-700 font-bold flex items-center gap-3" style="animation-delay: 50ms;">
+                        <i class="fas fa-hard-hat text-slate-400"></i> البناء والمقاولات
+                    </div>
+                    <div class="sector-tag bg-white px-5 py-3 rounded-full border border-slate-200 shadow-sm text-slate-700 font-bold flex items-center gap-3" style="animation-delay: 100ms;">
+                        <i class="fas fa-stethoscope text-slate-400"></i> الصحة والطب
+                    </div>
+                    <div class="sector-tag bg-white px-5 py-3 rounded-full border border-slate-200 shadow-sm text-slate-700 font-bold flex items-center gap-3" style="animation-delay: 150ms;">
+                        <i class="fas fa-industry text-slate-400"></i> الصناعة
+                    </div>
+                    <div class="sector-tag bg-white px-5 py-3 rounded-full border border-slate-200 shadow-sm text-slate-700 font-bold flex items-center gap-3" style="animation-delay: 200ms;">
+                        <i class="fas fa-laptop-code text-slate-400"></i> التكنولوجيا
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ====== CONTACT ====== -->
+    <section id="contact" class="py-24 bg-dark-900 text-white relative overflow-hidden">
+        <div class="absolute inset-0 opacity-10">
+            <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-blue-500 rounded-full blur-[120px]"></div>
+        </div>
+        
+        <div class="container mx-auto px-6 relative z-10">
+            <div class="max-w-2xl mx-auto text-center reveal">
+                <h2 class="text-4xl md:text-5xl font-black mb-6">هيا بنا نبدأ</h2>
+                <p class="text-slate-300 text-lg mb-10">تواصل معنا اليوم لاستكشاف الفرص اللا محدودة</p>
+                
+                <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                    <a href="mailto:contact@serena.com" class="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors shadow-lg">
+                        <i class="fas fa-envelope mr-2"></i> البريد الإلكتروني
+                    </a>
+                    <a href="https://wa.me/your-number" target="_blank" class="px-8 py-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors shadow-lg">
+                        <i class="fas fa-whatsapp mr-2"></i> واتساب
+                    </a>
+                    <a href="tel:+1234567890" class="px-8 py-4 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl transition-colors shadow-lg">
+                        <i class="fas fa-phone mr-2"></i> الهاتف
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ====== FOOTER ====== -->
+    <footer class="bg-black/50 py-12 border-t border-slate-700 text-white/60 text-center">
+        <div class="container mx-auto px-6">
+            <p class="mb-4">© 2024 وكالة سيرينا للتوظيف والاستثمار. جميع الحقوق محفوظة.</p>
+            <div class="flex justify-center gap-6">
+                <a href="#" class="hover:text-white transition"><i class="fab fa-facebook"></i></a>
+                <a href="#" class="hover:text-white transition"><i class="fab fa-twitter"></i></a>
+                <a href="#" class="hover:text-white transition"><i class="fab fa-linkedin"></i></a>
+                <a href="#" class="hover:text-white transition"><i class="fab fa-instagram"></i></a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Intersection Observer للـ Reveal Animation
+        const observerOptions = { root: null, rootMargin: '0px', threshold: 0.15 };
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+    </script>
 </body>
-
 </html>
