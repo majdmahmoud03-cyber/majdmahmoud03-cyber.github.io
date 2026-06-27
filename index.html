@@ -48,7 +48,11 @@
     
     <style>
         body { background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%); }
-        .hero-bg { background: linear-gradient(135deg, rgba(15,23,42,0.9) 0%, rgba(30,41,59,0.95) 50%, rgba(15,23,42,0.9) 100%), url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="20" cy="20" r="20" fill="rgba(59,130,246,0.1)"/><circle cx="80" cy="80" r="30" fill="rgba(139,92,246,0.1)"/></svg>'); background-attachment: fixed; }
+        .hero-bg { 
+            background: linear-gradient(135deg, rgba(15,23,42,0.7) 0%, rgba(30,41,59,0.75) 50%, rgba(15,23,42,0.7) 100%), 
+                        url('./hero-bg.jpg') center/cover no-repeat;
+            background-attachment: fixed;
+        }
         .glass-card { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); }
         .dark-glass { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
         .text-gradient-premium { background: linear-gradient(135deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
@@ -64,6 +68,7 @@
         .service-card:hover { transform: translateY(-8px); box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
         .sector-tag { transition: all 0.3s ease; animation: slideIn 0.5s ease forwards; opacity: 0; }
         @keyframes slideIn { to { opacity: 1; } }
+        .logo-img { max-height: 50px; width: auto; }
     </style>
 </head>
 <body class="text-slate-800">
@@ -71,7 +76,8 @@
     <nav class="fixed top-0 w-full bg-dark-900/95 backdrop-blur-md z-50 border-b border-slate-700">
         <div class="container mx-auto px-6 h-20 flex items-center justify-between">
             <div class="text-2xl font-black text-white flex items-center gap-3">
-                <i class="fas fa-handshake text-blue-500"></i> Serena
+                <img src="./logo.png" alt="Serena Logo" class="logo-img" onerror="this.style.display='none'">
+                <span id="logo-text">Serena</span>
             </div>
             <div class="hidden md:flex gap-8 items-center text-white/80 font-bold">
                 <a href="#services" class="hover:text-white transition">الخدمات</a>
@@ -372,20 +378,61 @@
         </div>
         
         <div class="container mx-auto px-6 relative z-10">
-            <div class="max-w-2xl mx-auto text-center reveal">
-                <h2 class="text-4xl md:text-5xl font-black mb-6">هيا بنا نبدأ</h2>
-                <p class="text-slate-300 text-lg mb-10">تواصل معنا اليوم لاستكشاف الفرص اللا محدودة</p>
+            <div class="max-w-2xl mx-auto reveal">
+                <h2 class="text-4xl md:text-5xl font-black mb-6 text-center">هيا بنا نبدأ</h2>
+                <p class="text-slate-300 text-lg mb-10 text-center">تواصل معنا اليوم لاستكشاف الفرص اللا محدودة</p>
                 
-                <div class="flex flex-col sm:flex-row gap-4 justify-center">
-                    <a href="mailto:contact@serena.com" class="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors shadow-lg">
-                        <i class="fas fa-envelope mr-2"></i> البريد الإلكتروني
+                <!-- Contact Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+                    <!-- Email -->
+                    <a href="mailto:latakia@serena-sy.com" class="group dark-glass rounded-2xl p-8 text-center hover:bg-white/10 transition-all">
+                        <div class="text-4xl mb-4 text-blue-400"><i class="fas fa-envelope"></i></div>
+                        <h3 class="text-xl font-bold mb-2">البريد الإلكتروني</h3>
+                        <p class="text-slate-300 text-sm break-all">latakia@serena-sy.com</p>
                     </a>
-                    <a href="https://wa.me/your-number" target="_blank" class="px-8 py-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors shadow-lg">
-                        <i class="fas fa-whatsapp mr-2"></i> واتساب
+
+                    <!-- WhatsApp -->
+                    <div class="dark-glass rounded-2xl p-8">
+                        <div class="text-4xl mb-4 text-green-400 text-center"><i class="fas fa-whatsapp"></i></div>
+                        <h3 class="text-xl font-bold mb-4 text-center">واتساب</h3>
+                        <div class="space-y-3">
+                            <a href="https://whatsapp.com/channel/0029Vb6bHoHFi8xV5nMaPr43" target="_blank" class="block p-3 bg-white/10 rounded-lg hover:bg-white/20 transition text-center text-sm font-bold">
+                                <i class="fas fa-phone-alt mr-2"></i> سوريا
+                            </a>
+                            <a href="https://whatsapp.com/channel/0029Vb7HzDyB4hdOUQ1vKy00" target="_blank" class="block p-3 bg-white/10 rounded-lg hover:bg-white/20 transition text-center text-sm font-bold">
+                                <i class="fas fa-phone-alt mr-2"></i> لبنان
+                            </a>
+                        </div>
                     </a>
-                    <a href="tel:+1234567890" class="px-8 py-4 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl transition-colors shadow-lg">
-                        <i class="fas fa-phone mr-2"></i> الهاتف
-                    </a>
+
+                    <!-- Phone -->
+                    <div class="dark-glass rounded-2xl p-8 text-center">
+                        <div class="text-4xl mb-4 text-blue-400"><i class="fas fa-phone"></i></div>
+                        <h3 class="text-xl font-bold mb-2">الهاتف</h3>
+                        <p class="text-slate-300 text-sm">تحت الإنشاء</p>
+                    </div>
+                </div>
+
+                <!-- Social Media -->
+                <div class="text-center">
+                    <h3 class="text-2xl font-bold mb-8">تابعنا على وسائل التواصل</h3>
+                    <div class="flex justify-center gap-6 flex-wrap">
+                        <a href="https://www.facebook.com/profile.php?id=61577240213275" target="_blank" class="group w-16 h-16 bg-white/10 hover:bg-blue-600 rounded-full flex items-center justify-center transition-all transform hover:scale-110">
+                            <i class="fab fa-facebook text-2xl group-hover:text-white"></i>
+                        </a>
+                        <a href="https://www.facebook.com/profile.php?id=61576853063342" target="_blank" class="group w-16 h-16 bg-white/10 hover:bg-blue-600 rounded-full flex items-center justify-center transition-all transform hover:scale-110">
+                            <i class="fab fa-facebook text-2xl group-hover:text-white"></i>
+                        </a>
+                        <a href="https://www.instagram.com/serena_employment_agency/" target="_blank" class="group w-16 h-16 bg-white/10 hover:bg-pink-600 rounded-full flex items-center justify-center transition-all transform hover:scale-110">
+                            <i class="fab fa-instagram text-2xl group-hover:text-white"></i>
+                        </a>
+                        <a href="https://www.linkedin.com/company/serena-employment-agency" target="_blank" class="group w-16 h-16 bg-white/10 hover:bg-blue-700 rounded-full flex items-center justify-center transition-all transform hover:scale-110">
+                            <i class="fab fa-linkedin text-2xl group-hover:text-white"></i>
+                        </a>
+                    </div>
+                    <div class="mt-4 text-slate-400 text-sm">
+                        <p><i class="fas fa-map-marker-alt mr-2"></i> اللاذقية - سوريا</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -395,12 +442,7 @@
     <footer class="bg-black/50 py-12 border-t border-slate-700 text-white/60 text-center">
         <div class="container mx-auto px-6">
             <p class="mb-4">© 2024 وكالة سيرينا للتوظيف والاستثمار. جميع الحقوق محفوظة.</p>
-            <div class="flex justify-center gap-6">
-                <a href="#" class="hover:text-white transition"><i class="fab fa-facebook"></i></a>
-                <a href="#" class="hover:text-white transition"><i class="fab fa-twitter"></i></a>
-                <a href="#" class="hover:text-white transition"><i class="fab fa-linkedin"></i></a>
-                <a href="#" class="hover:text-white transition"><i class="fab fa-instagram"></i></a>
-            </div>
+            <p class="text-sm">تم التطوير بـ ❤️ من قبل فريق سيرينا</p>
         </div>
     </footer>
 
@@ -417,6 +459,15 @@
         }, observerOptions);
 
         document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+        // إذا لم يتم تحميل اللوغو، أخفي الصورة وأظهر النص
+        window.addEventListener('load', function() {
+            const logo = document.querySelector('.logo-img');
+            const logoText = document.getElementById('logo-text');
+            if (logo && logo.style.display === 'none') {
+                logoText.classList.remove('hidden');
+            }
+        });
     </script>
 </body>
 </html>
